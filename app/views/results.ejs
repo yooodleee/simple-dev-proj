@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Results</title>
+</head>
+<body>
+  <h1>Voting Results</h1>
+  <ul>
+    <% for (const option in votes) { %>
+      <li><%= option %>: <%= votes[option] %> votes</li>
+    <% } %>
+  </ul>
+  <a href="/">Back to vote</a>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Vote</title>
+</head>
+<body>
+  <h1>Vote for your favorite DevOps tool</h1>
+  <form action="/vote" method="POST">
+    <% options.forEach(function(option) { %>
+      <div>
+        <label>
+          <input type="radio" name="choice" value="<%= option %>">
+          <%= option %>
+        </label>
+      </div>
+    <% }) %>
+    <button type="submit">Submit Vote</button>
+  </form>
+</body>
+</html>
