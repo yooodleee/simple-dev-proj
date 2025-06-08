@@ -6,11 +6,18 @@ resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
 
-resource "aws_subnet" "public" {
+resource "aws_subnet" "public_a" {
   vpc_id = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
+  cidr_block = "10.0.11.0/24"
   availability_zone = "${var.region}a"
   map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "public_b" {
+  vpc_id = aws_vpc.main.id
+  cidr_block = "10.0.12.0/24"
+  availability_zone = "${var.region}b"
+  map_public_ip_on_launch = true 
 }
 
 resource "aws_internet_gateway" "igw" {
@@ -27,8 +34,13 @@ resource "aws_route" "igw_route" {
   gateway_id = aws_internet_gateway.igw.id
 }
 
-resource "aws_route_table_association" "public" {
-  subnet_id = aws_subnet.public.id
+resource "aws_route_table_association" "public_a" {
+  subnet_id = aws_subnet.public_a.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_b" {
+  subnet_id = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -62,7 +74,10 @@ resource "aws_lb" "app_alb" {
   internal = false 
   load_balancer_type = "application"
   security_groups = [aws_security_group.alb_sg.id]
-  subnets = [aws_subnet.public.id]
+  subnets = [
+    aws_subnet.public_a.id,
+    aws_subnet.public_b.id
+  ]
 
   enable_deletion_protection = false 
 }
@@ -73,6 +88,7 @@ resource "aws_lb_target_group" "app_tg" {
   port = 3000
   protocol = "HTTP"
   vpc_id = aws_vpc.main.id
+  target_type = "ip"
 
   health_check {
     path = "/"
@@ -86,7 +102,7 @@ resource "aws_lb_target_group" "app_tg" {
 }
 
 # Create Listner (port 80 -> Target Group)
-resource "aws_lb_listener" "http_listner" {
+resource "aws_lb_listener" "http_listener" {
   load_balancer_arn = aws_lb.app_alb.arn
   port = 80
   protocol = "HTTP"
@@ -95,6 +111,8 @@ resource "aws_lb_listener" "http_listner" {
     type = "forward"
     target_group_arn = aws_lb_target_group.app_tg.arn
   }
+
+  depends_on = [ aws_lb_target_group.app_tg ]
 }
 
 # ECS Task Definition
@@ -108,7 +126,7 @@ resource "aws_ecs_task_definition" "app_task" {
   container_definitions = jsonencode([
     {
       name = "app"
-      image = 122610481100.dkr.ecr.us-east-1.amazonaws.com/devops-vote-app
+      image = "122610481100.dkr.ecr.us-east-1.amazonaws.com/devops-vote-app:latest"
       portMappings = [
         {
           containerPort = 3000
@@ -132,7 +150,7 @@ resource "aws_iam_role" "ecs_task_execution_role" {
       Principal = {
         Service = "ecs-tasks.amazonaws.com"
       },
-      Effact = "Allow",
+      Effect = "Allow",
       Sid = ""
     }]
   })
@@ -141,4 +159,48 @@ resource "aws_iam_role" "ecs_task_execution_role" {
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   role = aws_iam_role.ecs_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# ECS Service
+resource "aws_ecs_service" "app_service" {
+  name = "${var.project_name}-service"
+  cluster = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.app_task.arn
+  launch_type = "FARGATE"
+  desired_count = 1
+
+  network_configuration {
+    subnets = [
+      aws_subnet.public_a.id,
+      aws_subnet.public_b.id
+    ]
+    security_groups = [aws_security_group.alb_sg.id]
+    assign_public_ip = true 
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app_tg.arn
+    container_name = "app"
+    container_port = 3000
+  }
+
+  depends_on = [ aws_lb_listener.http_listener ]
+}
+
+resource "aws_security_group" "app_sg" {
+  name = "${var.project_name}-app-sg"
+  vpc_id = aws_vpc.main.id
+  ingress {
+    from_port = 3000
+    to_port = 3000
+    protocol = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
